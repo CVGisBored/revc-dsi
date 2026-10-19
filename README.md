@@ -15,8 +15,7 @@ original engine or unrestricted SCM execution. Live gameplay and story movies
 share a 128×72 source resolution with a 256×144 letterboxed presentation.
 Gameplay uses reduced cutscene-derived character meshes; cinematic facial
 animation and full cinematic geometry are not reproduced in gameplay.
-Streaming can still stall, and a sustained 30 FPS on physical DSi is not
-established. Save/load and full original-game feature parity remain incomplete.
+Streaming can still stall. Save/load and full original-game feature parity remain incomplete.
 
 ## Layout
 
