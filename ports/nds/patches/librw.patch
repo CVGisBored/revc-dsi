@@ -1,0 +1,66 @@
+diff --git a/src/png.cpp b/src/png.cpp
+index 45aa102..87a3a9f 100644
+--- a/src/png.cpp
++++ b/src/png.cpp
+@@ -28,7 +28,7 @@ readPNG(const char *filename)
+ 	LodePNGState state;
+ 	lodepng_state_init(&state);
+ 	uint8 *raw = nil;
+-	uint32 w, h;
++	unsigned int w, h;
+ 
+ 	// First try: decode without conversion to see if we understand the format
+ 	state.decoder.color_convert = 0;
+diff --git a/src/rwbase.h b/src/rwbase.h
+index 6bc8a54..2ecd9ad 100644
+--- a/src/rwbase.h
++++ b/src/rwbase.h
+@@ -56,11 +56,18 @@ namespace rw {
+ 	/* get rid of the stupid _t */
+ 	typedef int8_t int8;
+ 	typedef int16_t int16;
++#ifdef REVC_NDS
++	// devkitARM's int32_t is long; legacy reader APIs use int pointers.
++	typedef int int32;
++	typedef unsigned int uint32;
++	static_assert(sizeof(int32) == 4, "NDS RenderWare requires 32-bit int");
++#else
+ 	typedef int32_t int32;
++	typedef uint32_t uint32;
++#endif
+ 	typedef int64_t int64;
+ 	typedef uint8_t uint8;
+ 	typedef uint16_t uint16;
+-	typedef uint32_t uint32;
+ 	typedef uint64_t uint64;
+ 	typedef uintptr_t uintptr;
+ #endif
+diff --git a/src/rwengine.h b/src/rwengine.h
+index 995f3ce..d4f2c71 100644
+--- a/src/rwengine.h
++++ b/src/rwengine.h
+@@ -95,7 +95,11 @@ struct Driver
+ 	}
+ };
+ 
++#ifdef REVC_NDS
++struct EngineOpenParams { };
++#else
+ struct EngineOpenParams;
++#endif
+ 
+ enum MemHint
+ {
+diff --git a/src/texture.cpp b/src/texture.cpp
+index 958ae08..60fd542 100644
+--- a/src/texture.cpp
++++ b/src/texture.cpp
+@@ -333,7 +333,7 @@ Texture::read(const char *name, const char *mask)
+ {
+ 	(void)mask;
+ 	Raster *raster = nil;
+-	Texture *tex;
++	Texture *tex = nil;
+ 
+ 	if(tex = Texture::findCB(name), tex){
+ 		tex->addRef();

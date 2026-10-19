@@ -1,0 +1,258 @@
+diff --git a/src/core/ControllerConfig.cpp b/src/core/ControllerConfig.cpp
+index 372001d4..83de3f99 100644
+--- a/src/core/ControllerConfig.cpp
++++ b/src/core/ControllerConfig.cpp
+@@ -136,7 +136,11 @@ int MapIdToButtonId(int mapId) {
+ 
+ int32 CControllerConfigManager::GetJoyButtonJustDown()
+ {
+-#ifdef __DINPUT_INCLUDED__
++#ifdef REVC_NDS
++	for (int32 i = 0; i < Min(m_NewState.numButtons, MAX_BUTTONS); i++)
++		if (m_NewState.buttons[i] && !m_OldState.buttons[i])
++			return i + 1;
++#elif defined(__DINPUT_INCLUDED__)
+ #ifdef FIX_BUGS
+ 	for (int32 i = 0; i < MAX_BUTTONS; i++)
+ #else
+@@ -2843,7 +2847,10 @@ void CControllerConfigManager::UpdateJoyButtonState(int32 padnumber)
+ 	for (int32 i = 0; i < MAX_BUTTONS; i++)
+ 		m_aButtonStates[i] = false;
+ 
+-#ifdef __DINPUT_INCLUDED__
++#ifdef REVC_NDS
++	for (int32 i = 0; i < Min(m_NewState.numButtons, MAX_BUTTONS); i++)
++		m_aButtonStates[i] = m_NewState.buttons[i] != 0;
++#elif defined(__DINPUT_INCLUDED__)
+ 	for (int32 i = 0; i < MAX_BUTTONS; i++)
+ 	{
+ 		if (m_NewState.rgbButtons[i] & 0x80)
+diff --git a/src/core/ControllerConfig.h b/src/core/ControllerConfig.h
+index 8c1c530c..b7fd0c44 100644
+--- a/src/core/ControllerConfig.h
++++ b/src/core/ControllerConfig.h
+@@ -109,7 +109,7 @@ class CControllerState;
+ 
+ #define ACTIONNAME_LENGTH 40
+ 
+-#ifdef RW_GL3
++#if defined(RW_GL3) || defined(REVC_NDS)
+ struct JoyState {
+     int8 id;
+     bool isGamepad;
+@@ -135,7 +135,7 @@ public:
+ 	};
+ 
+ 	bool                  m_bFirstCapture;
+-#if defined RW_GL3
++#if defined(RW_GL3) || defined(REVC_NDS)
+     JoyState              m_OldState;
+     JoyState              m_NewState;
+ #else
+diff --git a/src/core/Directory.cpp b/src/core/Directory.cpp
+index 05344065..4059d7f9 100644
+--- a/src/core/Directory.cpp
++++ b/src/core/Directory.cpp
+@@ -22,8 +22,15 @@ CDirectory::ReadDirFile(const char *filename)
+ 	DirectoryInfo dirinfo;
+ 
+ 	fd = CFileMgr::OpenFile(filename, "rb");
++#ifdef REVC_NDS
++	if (!fd) return;
++	while(CFileMgr::Read(fd, (char*)&dirinfo, sizeof(dirinfo)) == sizeof(dirinfo))
++		if (memchr(dirinfo.name, 0, sizeof(dirinfo.name)))
++			AddItem(dirinfo);
++#else
+ 	while(CFileMgr::Read(fd, (char*)&dirinfo, sizeof(dirinfo)))
+ 		AddItem(dirinfo);
++#endif
+ 	CFileMgr::CloseFile(fd);
+ }
+ 
+@@ -41,6 +48,9 @@ CDirectory::WriteDirFile(const char *filename)
+ void
+ CDirectory::AddItem(const DirectoryInfo &dirinfo)
+ {
++#ifdef REVC_NDS
++	if (numEntries >= maxEntries) return;
++#endif
+ 	assert(numEntries < maxEntries);
+ #ifdef FIX_BUGS
+ 	// don't add if already exists
+diff --git a/src/core/Frontend.cpp b/src/core/Frontend.cpp
+index fe015f41..a3bd2821 100644
+--- a/src/core/Frontend.cpp
++++ b/src/core/Frontend.cpp
+@@ -4936,7 +4936,9 @@ CMenuManager::ProcessUserInput(uint8 goDown, uint8 goUp, uint8 optionSelected, u
+ 					ControlsManager.MakeControllerActionsBlank();
+ 					ControlsManager.InitDefaultControlConfiguration();
+ 					ControlsManager.InitDefaultControlConfigMouse(MousePointerStateHelper.GetMouseSetUp());
+-#if !defined RW_GL3
++#if defined(REVC_NDS)
++					ControlsManager.InitDefaultControlConfigJoyPad(12);
++#elif !defined RW_GL3
+ 					if (AllValidWinJoys.m_aJoys[JOYSTICK1].m_bInitialised) {
+ 						DIDEVCAPS devCaps;
+ 						devCaps.dwSize = sizeof(DIDEVCAPS);
+diff --git a/src/core/Pad.cpp b/src/core/Pad.cpp
+index 9530f9e7..c45551ec 100644
+--- a/src/core/Pad.cpp
++++ b/src/core/Pad.cpp
+@@ -836,7 +836,10 @@ CMouseControllerState CMousePointerStateHelper::GetMouseSetUp()
+ {
+ 	CMouseControllerState state;
+ 
+-#if defined RW_D3D9 || defined RWLIBS
++#if defined(REVC_NDS)
++	state.Clear();
++	state.x = state.y = 0.0f;
++#elif defined RW_D3D9 || defined RWLIBS
+ 	if ( PSGLOBAL(mouse) == nil )
+ 		_InputInitialiseMouse(!FrontEndMenuManager.m_bMenuActive && _InputMouseNeedsExclusive());
+ 
+@@ -897,7 +900,12 @@ void _InputConsumeMouseRelative(int *dx, int *dy);
+ 
+ void CPad::UpdateMouse()
+ {
+-#if defined RW_D3D9 || defined RWLIBS
++#if defined(REVC_NDS)
++	PCTempMouseControllerState.Clear();
++	PCTempMouseControllerState.x = PCTempMouseControllerState.y = 0.0f;
++	OldMouseControllerState = NewMouseControllerState;
++	NewMouseControllerState = PCTempMouseControllerState;
++#elif defined RW_D3D9 || defined RWLIBS
+ 	if ( IsForegroundApp() )
+ 	{
+ 		if ( PSGLOBAL(mouse) == nil )
+diff --git a/src/core/Streaming.cpp b/src/core/Streaming.cpp
+index 83bb21bc..b5798ad0 100644
+--- a/src/core/Streaming.cpp
++++ b/src/core/Streaming.cpp
+@@ -226,12 +226,17 @@ CStreaming::Init2(void)
+ #ifdef FIX_BUGS
+ 	// do what gta3 does
+ 	extern size_t _dwMemAvailPhys;
++#ifdef REVC_NDS
++	ms_memoryAvailable = 2*MB;
++	desiredNumVehiclesLoaded = 4;
++#else
+ 	ms_memoryAvailable = (_dwMemAvailPhys - 10*MB)/2;
+ 	if(ms_memoryAvailable < 65*MB)
+ 		ms_memoryAvailable = 65*MB;
+ 	desiredNumVehiclesLoaded = (int32)((ms_memoryAvailable / MB - 65) / 3 + 12);
+ 	if(desiredNumVehiclesLoaded > MAXVEHICLESLOADED)
+ 		desiredNumVehiclesLoaded = MAXVEHICLESLOADED;
++#endif
+ #else
+ 	ms_memoryAvailable = 65 * MB;
+ 	desiredNumVehiclesLoaded = 25;
+@@ -3082,11 +3087,19 @@ CStreaming::MakeSpaceFor(int32 size)
+ #ifdef FIX_BUGS
+ #define MB (1024 * 1024)
+ 	if(ms_memoryAvailable == 0) {
++#ifdef REVC_NDS
++		ms_memoryAvailable = 2*MB;
++#else
+ 		extern size_t _dwMemAvailPhys;
+ 		ms_memoryAvailable = (_dwMemAvailPhys - 10 * MB) / 2;
+ 		if(ms_memoryAvailable < 65 * MB) ms_memoryAvailable = 65 * MB;
++#endif
+ 	}
+ #undef MB
++#endif
++#ifdef REVC_NDS
++	// Oversized resources must be rejected by the loader; avoid size_t underflow.
++	if (size < 0 || (size_t)size >= ms_memoryAvailable) return;
+ #endif
+ 	while(ms_memoryUsed >= ms_memoryAvailable - size)
+ 		if(!RemoveLeastUsedModel(STREAMFLAGS_20)){
+diff --git a/src/core/common.h b/src/core/common.h
+index e0ddb033..2a9f47af 100644
+--- a/src/core/common.h
++++ b/src/core/common.h
+@@ -98,7 +98,11 @@ typedef uint8_t uint8;
+ typedef int8_t int8;
+ typedef uint16_t uint16;
+ typedef int16_t int16;
+-#ifndef __MWERKS__
++#if defined(REVC_NDS)
++typedef unsigned int uint32;
++typedef int int32;
++static_assert(sizeof(int32) == 4, "NDS game types require 32-bit int");
++#elif !defined(__MWERKS__)
+ typedef uint32_t uint32;
+ typedef int32_t int32;
+ #else
+diff --git a/src/core/config.h b/src/core/config.h
+index 73295443..1af6dda4 100644
+--- a/src/core/config.h
++++ b/src/core/config.h
+@@ -169,7 +169,7 @@ enum Config {
+ #define GTA_VERSION	GTAVC_PC_11
+ 
+ // Enable configuration for handheld console ports
+-#if defined(__SWITCH__) || defined(PSP2)
++#if defined(__SWITCH__) || defined(PSP2) || defined(REVC_NDS)
+ 	#define GTA_HANDHELD
+ #endif
+ 
+@@ -325,7 +325,7 @@ enum Config {
+ #define DISABLE_VSYNC_ON_TEXTURE_CONVERSION // make texture conversion work faster by disabling vsync
+ #define ANISOTROPIC_FILTERING	// set all textures to max anisotropic filtering
+ //#define USE_TEXTURE_POOL
+-#ifdef LIBRW
++#if defined(LIBRW) && !defined(REVC_NDS)
+ #define EXTENDED_COLOURFILTER		// more options for colour filter (replaces mblur)
+ #define EXTENDED_PIPELINES		// custom render pipelines (includes Neo)
+ #define SCREEN_DROPLETS			// neo water droplets
+@@ -475,7 +475,7 @@ static_assert(false, "SUPPORT_XBOX_SCRIPT and SUPPORT_MOBILE_SCRIPT are mutually
+ #endif
+ 
+ // Streaming
+-#if !defined(_WIN32) && !defined(__SWITCH__)
++#if !defined(_WIN32) && !defined(__SWITCH__) && !defined(REVC_NDS)
+ 	//#define ONE_THREAD_PER_CHANNEL // Don't use if you're not on SSD/Flash - also not utilized too much right now(see commented LoadAllRequestedModels in Streaming.cpp)
+ 	#define FLUSHABLE_STREAMING // Make it possible to interrupt reading when processing file isn't needed anymore.
+ #endif
+@@ -511,4 +511,13 @@ static_assert(false, "SUPPORT_XBOX_SCRIPT and SUPPORT_MOBILE_SCRIPT are mutually
+ #error EXTERNAL_3D_SOUND cannot work on PS2
+ #endif
+ 
++#ifdef REVC_NDS
++// Hardware has one fixed display mode and no desktop graphics options.
++#undef MULTISAMPLING
++#undef ANISOTROPIC_FILTERING
++#undef CUSTOM_FRONTEND_OPTIONS
++#undef GRAPHICS_MENU_OPTIONS
++#undef USE_MY_DOCUMENTS
++#endif
++
+ #endif // __GTA_CONFIG_H__
+diff --git a/src/skel/crossplatform.cpp b/src/skel/crossplatform.cpp
+index 5af59d81..2fdafed7 100644
+--- a/src/skel/crossplatform.cpp
++++ b/src/skel/crossplatform.cpp
+@@ -261,7 +261,7 @@ char* casepath(char const* path, bool checkPathFirst)
+     DIR* d;
+     char* c;
+ 
+-    #if defined(__SWITCH__) || defined(PSP2)
++    #if defined(__SWITCH__) || defined(PSP2) || defined(REVC_NDS)
+     if( (c = strstr(p, ":/")) != NULL) // scheme used by some environments, eg. switch, vita
+     {
+         size_t deviceNameOffset = c - p + 3;
+diff --git a/src/skel/crossplatform.h b/src/skel/crossplatform.h
+index 8b617b59..5094e91c 100644
+--- a/src/skel/crossplatform.h
++++ b/src/skel/crossplatform.h
+@@ -92,6 +92,10 @@ void CapturePad(RwInt32 padID);
+ void joysChangeCB(int jid, int event);
+ #endif
+ 
++#ifdef REVC_NDS
++void CapturePad(RwInt32 padID);
++#endif
++
+ #ifdef DETECT_JOYSTICK_MENU
+ extern char gSelectedJoystickName[128];
+ #endif

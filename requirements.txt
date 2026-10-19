@@ -1,0 +1,4 @@
+pefile>=2023.2.7
+numpy>=1.24
+Pillow>=10
+PyOpenGL>=3.1
