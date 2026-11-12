@@ -30,6 +30,7 @@
 #include "projection.h"
 #include "rom_storage.h"
 #include "gameplay_display.h"
+#include "sparrow_data.h"
 #ifdef REVC_INSPECT_OCEAN_VIEW
 #include "campaign_data.h"
 #endif
@@ -49,7 +50,8 @@ slice::Street job;
 slice::Animation playerAnimation,guardAnimation;
 slice::Animation driverAnimation,trafficDriverAnimation;
 slice::VehicleModels vehicleModels;
-slice::ActorTexture fleetTexture,pedestrianTexture;
+slice::ActorTexture fleetTexture,pedestrianTexture,serviceTexture;
+bool serviceTextureLoaded=false;
 slice::VehicleAnimation vehicleAnimation;
 slice::PlayerMotion playerMotion;
 bool playerAction=false;
@@ -181,15 +183,38 @@ void mesh(slice::Point p,const RevcTriangle* triangles,int count,int heading,int
 void fleetMesh(slice::Point position,int model,int heading,slice::Point tilt,float roll,float steering,bool detailed,float door=0,int side=-1,slice::Point body={}) {
     const auto& resource=vehicleModels.model(model);const auto& data=detailed ? resource.detail : resource.far;
     if(!data.count)return;
-    fleetTexture.bind();
+    (model>=slice::VehicleModels::FireTruck ? serviceTexture : fleetTexture).bind();
     mesh(position,vehicleAnimation.pose(data.rig,data.triangles.get(),data.count,roll,steering,door,side,body),data.count,heading,1,tilt,data.uv.get());
 }
 int fleetTriangles(int model,bool detail){const auto& data=vehicleModels.model(model);return detail ? data.detail.count : data.far.count;}
 void parking() {
     if(!campaign.hasTarget())return;
     auto p=campaign.target(world.anchor());
+    if(campaign.flying()){
+        if(actorDistance2(p)>70*70 || std::fabs(p.y-physics.player.y)>70)return;
+        glColor(RGB15(31,5,23));glBegin(GL_QUADS);
+        const float rightX=cosLerp(yaw)/4096.f,rightZ=sinLerp(yaw)/4096.f;
+        for(int i=0;i<12;++i){
+            auto vertex=[&](int edge,float radius){
+                int angle=edge*32768/12;
+                float side=cosLerp(angle)/4096.f*radius;
+                glVertex3v16(int((p.x+side*rightX)*64),int((p.y+sinLerp(angle)/4096.f*radius)*64),int((p.z+side*rightZ)*64));
+            };
+            vertex(i,4.5f);vertex(i+1,4.5f);vertex(i+1,4.f);vertex(i,4.f);
+        }
+        glEnd();return;
+    }
     physics.placeActor(p,4);
     if(std::fabs(p.x-physics.player.x)>15 || std::fabs(p.z-physics.player.z)>15) return;
+    if(campaign.fireJob() && campaign.vehicleCount()){
+        glBegin(GL_TRIANGLES);
+        for(int i=-1;i<=1;++i){
+            int x=int(p.x*64)+i*30,y=int(p.y*64)+60,z=int(p.z*64);
+            glColor(RGB15(31,9,0));glVertex3v16(x-28,y,z);glVertex3v16(x+28,y,z);
+            glColor(RGB15(31,27,3));glVertex3v16(x+8,y+70+((animationClock+i*7)&31),z+14);
+        }
+        glEnd();
+    }
     glColor(RGB15(31,5,23));glBegin(GL_QUADS);
     // Parking stripes replace the former gold checkpoint cubes.
     for(int side : {-1,1}) {
@@ -240,10 +265,16 @@ void draw(const Camera& camera) {
     bool drawCars[slice::Population::VehicleCapacity]{},drawPeds[slice::Population::PedCount]{};
     bool drawEnemies[4]{},drawMissionCars[3]{},drawGuard=false,drawPassenger=false;
     float eyeX=camera.x/64.f-physics.player.x,eyeY=camera.y/64.f-physics.player.y-1.1f,eyeZ=camera.z/64.f-physics.player.z;
-    const bool showPlayer=!job.inCar && !job.transitioning() && eyeX*eyeX+eyeY*eyeY+eyeZ*eyeZ>.36f;
+    const bool showPlayer=!campaign.flying() && !job.inCar && !job.transitioning() && eyeX*eyeX+eyeY*eyeY+eyeZ*eyeZ>.36f;
     const bool showDriver=(job.inCar || job.transitioning()) && nearPlayer(job.car);
     int actorPolygons=showPlayer ? playerAnimation.count() : showDriver ? driverAnimation.count() : 0;
     int plannedActors=(showPlayer || showDriver) ? playerAnimation.count() : 0;
+    const auto aircraftPosition=campaign.flying() ? physics.player : campaign.flightPad() ? campaign.target(anchor) : slice::Point{};
+    const bool showAircraft=campaign.flying() || (campaign.flightPad() && nearPlayer(aircraftPosition));
+    if(showAircraft){
+        const int aircraftCost=sizeof(sparrow::chassis_vlo)/sizeof(RevcTriangle)+sizeof(sparrow::toprotor)/sizeof(RevcTriangle)+sizeof(sparrow::rearrotor)/sizeof(RevcTriangle);
+        actorPolygons+=aircraftCost;plannedActors+=aircraftCost;
+    }
     if(nearPlayer(job.car)){int cost=fleetTriangles(job.carModel,false);actorPolygons+=cost;plannedActors+=cost;}
     struct ActorChoice {float distance;int cost;bool* admitted;};
     ActorChoice choices[32];int choiceCount=0;
@@ -331,6 +362,11 @@ void draw(const Camera& camera) {
     glPolyFmt(POLY_ALPHA(31)|POLY_CULL_NONE|ClipFarPolygons|POLY_FOG);
     if(physics.state!=slice::Game::LoadingFailed) {
         parking();
+        if(showAircraft){
+            mesh(aircraftPosition,sparrow::chassis_vlo,sizeof(sparrow::chassis_vlo)/sizeof(RevcTriangle),campaign.aircraftHeading());
+            mesh(aircraftPosition,sparrow::toprotor,sizeof(sparrow::toprotor)/sizeof(RevcTriangle),(campaign.aircraftHeading()+(campaign.flying() ? int((animationClock*947u)&32767) : 0))&32767);
+            mesh(aircraftPosition,sparrow::rearrotor,sizeof(sparrow::rearrotor)/sizeof(RevcTriangle),campaign.aircraftHeading());
+        }
         if(showPlayer){playerTexture.bind();mesh(physics.player,playerAction ? playerAnimation.mesh() : playerAnimation.poseMesh(playerMotion.first(),playerMotion.firstPhase(),playerMotion.second(),playerMotion.secondPhase(),playerMotion.blend()),playerAnimation.count(),playerMotion.heading(),1,{},playerAnimation.uv());}
         fleetMesh(job.car,job.carModel,job.carYaw,job.carTilt,job.wheelRoll,job.steering(),carDetailed,job.doorAngle(),job.doorSide(),job.bodyTilt);
         if(showDriver) {
@@ -470,7 +506,20 @@ int main(int argc,char** argv) {
                 physics.pause();world.cancelStreaming();auto choice=slice::GameplayDisplay::framebuffer([](){return slice::Frontend::run(true);});
                 if(choice==slice::Frontend::Error){error=30;physics.state=slice::Game::LoadingFailed;}
                 else if(choice==slice::Frontend::Map)citymap.pause(true);
-                else {physics.pause();menuNewGame=choice==slice::Frontend::NewGame;}
+                else {physics.pause();menuNewGame=choice==slice::Frontend::NewGame;
+                    if(choice==slice::Frontend::Mission){
+                        campaign.leaveAircraft(physics,world.anchor());
+                        const unsigned pick=slice::Frontend::selectedMission;
+                        if(!serviceTextureLoaded && (pick==77 || pick==78 || pick==83)){
+                            serviceTextureLoaded=serviceTexture.open("nitro:/world/fleet-service.atx");
+                            if(!serviceTextureLoaded){error=28;physics.state=slice::Game::LoadingFailed;}
+                        }
+                        campaign.selectMission(pick);
+                        if(slice::Frontend::selectedMission==1)
+                            slice::GameplayDisplay::framebuffer([](){return slice::Frontend::story();});
+                        job.health=std::max(job.health,100);job.alert=0;citymap.invalidate();
+                    }
+                }
             }
             lastTick=tickGetCount();remainder=0;streamHistory=false;
         }
@@ -490,7 +539,7 @@ int main(int argc,char** argv) {
         const auto origin=world.anchor();
         const slice::Point globalPlayer={physics.player.x+origin.x,physics.player.y+origin.y,physics.player.z+origin.z};
         touchPosition touch{};if(down&KEY_TOUCH)touchRead(&touch);
-        if((down&KEY_TOUCH) && slice::WeaponWheel::button(touch.px,touch.py) && physics.state==slice::Game::Playing && !campaign.talking() && !campaign.briefing()) {
+        if((down&KEY_TOUCH) && slice::WeaponWheel::button(touch.px,touch.py) && physics.state==slice::Game::Playing && !campaign.flying() && !campaign.talking() && !campaign.briefing()) {
             world.cancelStreaming();slice::WeaponWheel::show(job);citymap.invalidate();
             lastTick=fpsStart=tickGetCount();remainder=0;fpsFrames=0;streamHistory=false;frame=3;continue;
         }
@@ -515,7 +564,7 @@ int main(int argc,char** argv) {
                 }
             }
             previousStreamPlayer=globalPlayer;streamHistory=true;previousMotionTicks=0;
-            if(!world.updateCollision(physics.player,streamPlayer) || !world.update(streamPlayer,shift,false,true,job.inCar)) {error=21;physics.state=slice::Game::LoadingFailed;}
+            if(!world.updateCollision(physics.player,streamPlayer,16,campaign.flying()) || !world.update(streamPlayer,shift,false,true,job.inCar || campaign.flying())) {error=21;physics.state=slice::Game::LoadingFailed;}
             else {
                 physics.rebase(shift);job.rebase(shift);population.rebase(shift);
                 if(boundRevision!=world.collisionRevision()) {physics.bindGeometry(world.triangles(),world.count());boundRevision=world.collisionRevision();}
@@ -553,7 +602,7 @@ int main(int argc,char** argv) {
             const bool talking=campaign.talking();
             const unsigned shoulders=KEY_L|KEY_R,directions=KEY_UP|KEY_DOWN|KEY_LEFT|KEY_RIGHT;
             const bool interact=(held&shoulders)==shoulders && (down&shoulders) && !(held&directions);
-            if(!talking && !briefing && interact && physics.playerGrounded()) {
+            if(!campaign.flying() && !talking && !briefing && interact && physics.playerGrounded()) {
                 bool wasInCar=job.inCar;slice::Garage::interact(physics,job,population,campaign,world.anchor(),&vehicleModels);
                 if(wasInCar!=job.inCar){physics.resetPlayerPhysics();playerMotion.settle(job.carYaw);}
             }
@@ -571,8 +620,15 @@ int main(int argc,char** argv) {
                 yaw=(yaw+horizontal*160*footMotion)&32767;
                 cameraPitch=std::max(-455,std::min(5916,cameraPitch+vertical*100*footMotion));
             }
+            auto activityOrigin=world.anchor();
+            const bool contextAction=campaign.activityInput({physics.player.x+activityOrigin.x,physics.player.y+activityOrigin.y,physics.player.z+activityOrigin.z});
             if(talking || briefing || job.transitioning()) { /* Dialogue and car entry suspend player actions. */ }
-            else if(job.inCar) {
+            else if(campaign.flying()){
+                const float si=sinLerp(yaw)/4096.f,co=cosLerp(yaw)/4096.f;
+                const float scale=(forward && turn) ? .70710678f : 1.f;
+                const int climb=((held&KEY_R)!=0)-((held&KEY_L)!=0);
+                campaign.fly(physics,world.anchor(),(forward*si+turn*co)*scale,(-forward*co+turn*si)*scale,climb,footMotion,yaw);
+            }else if(job.inCar) {
                 playerMotion.rest(footMotion);
                 job.steer(turn,motion);
                 auto beforeCar=job.car;
@@ -586,7 +642,7 @@ int main(int argc,char** argv) {
                 const float normalization=(forward && side) ? .70710678f : 1.f;
                 slice::PlayerMotion::Input input;
                 input.x=(forward*si+side*co)*normalization;input.z=(-forward*co+side*si)*normalization;
-                input.sprint=!job.armed && (held&KEY_R) && !(held&KEY_L);
+                input.sprint=!contextAction && !job.armed && (held&KEY_R) && !(held&KEY_L);
                 input.walk=(held&(KEY_L|KEY_R))==(KEY_L|KEY_R);
                 input.jump=(down&KEY_L) && !(held&(KEY_R|KEY_SELECT));
                 for(int tick=0;tick<footMotion;++tick) {
@@ -596,14 +652,15 @@ int main(int argc,char** argv) {
                         job.walkPlayer(step.x,step.z,1.f/60,step.impulse);
                     if(campaign.blocks(physics.player,world.anchor()) || population.blocks(physics.player)){physics.player.x=before.x;physics.player.z=before.z;}
                 }
-                if((held&KEY_R) && !(held&KEY_L)) {
+                if(!contextAction && (held&KEY_R) && !(held&KEY_L)) {
                     float si=sinLerp(playerMotion.heading())/4096.f,co=cosLerp(playerMotion.heading())/4096.f;
                     if(job.armed){fired=job.shoot(si,co);if(fired)campaign.strike(physics,job,world.anchor(),si,co,true);}
                     else fired=campaign.strike(physics,job,world.anchor(),si,co,false);
                 }
             }
             job.tick(elapsed);
-            campaign.tick(physics,job,world.anchor(),footMotion,false);
+            const bool use=contextAction && !briefing && !interact && !(held&KEY_L) && ((campaign.fireJob() ? held : down)&KEY_R);
+            campaign.tick(physics,job,world.anchor(),footMotion,use);
             {auto a=world.anchor();missionNear=campaign.nearby({physics.player.x+a.x,physics.player.y+a.y,physics.player.z+a.z});}
             if(campaign.outfit()!=playerOutfit) {
                 playerOutfit=campaign.outfit();
@@ -636,8 +693,8 @@ int main(int argc,char** argv) {
         }
         simulationTime=tickGetCount()-simulationStart;
         const uint64_t cameraStart=tickGetCount();
-        const bool vehicleCamera=job.inCar || job.transitioning();
-        const float distance=vehicleCamera ? 4.72f : 3.05f;
+        const bool vehicleCamera=campaign.flying() || job.inCar || job.transitioning();
+        const float distance=campaign.flying() ? 12.f : vehicleCamera ? 4.72f : 3.05f;
         const float back=distance*cosLerp(cameraPitch)/4096.f;
         const auto subject=job.transitioning() ? job.car : physics.player;
         const slice::Point focus={subject.x,subject.y+1.1f,subject.z};
@@ -677,7 +734,7 @@ int main(int argc,char** argv) {
             slice::Point objective={target.x+anchor.x,target.y+anchor.y,target.z+anchor.z};
             citymap.arrived(player,job.inCar);
             const uint64_t mapStart=tickGetCount();
-            citymap.draw(player,job.inCar ? yaw : playerMotion.heading(),campaign.hasTarget() ? &objective : nullptr,physics.state==slice::Game::Paused);
+            citymap.draw(player,(job.inCar || campaign.flying()) ? yaw : playerMotion.heading(),campaign.hasTarget() ? &objective : nullptr,physics.state==slice::Game::Paused);
             if(physics.state==slice::Game::Playing) slice::WeaponWheel::drawButton();
             mapTime=tickGetCount()-mapStart;
             const char* title=physics.state==slice::Game::Paused ? "PAUSED - CITY MAP" : campaign.title();
@@ -713,7 +770,7 @@ int main(int argc,char** argv) {
                 if(twoLines)std::printf("\x1b[21;0H%.32s",instruction+cut+(instruction[cut]==' '));
                 if(citymap.waypoint() || campaign.hasTarget())
                     std::printf("\x1b[%d;0H%s %4dm %s",twoLines ? 22 : 21,citymap.waypoint() ? "Waypoint" : "Mission",int(std::sqrt(dx*dx+dz*dz)),bearing);
-                if(!twoLines)std::printf("\x1b[22;0H%s",paused ? "X: zoom  Y: clear  Start: resume" : "L:jump R:sprint L+R:car");
+                if(!twoLines)std::printf("\x1b[22;0H%s",paused ? "X: zoom  Y: clear  Start: resume" : campaign.flying() ? "D-pad: fly  R: climb  L: descend" : "L:jump R:sprint L+R:car");
             }
             std::printf("\x1b[23;0H%-31.31s",physics.state==slice::Game::Paused ? "Touch:waypoint Select:restart" : "X/B:cam up/down Y/A:left/right");
             if(physics.state==slice::Game::LoadingFailed)std::printf("\x1b[20;0HLOAD FAILED: %d\x1b[21;0HWorld asset stage: %d",error,world.openError());

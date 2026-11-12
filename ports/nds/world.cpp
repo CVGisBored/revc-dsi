@@ -19,6 +19,12 @@ bool filePath(char* path,size_t size,const char* root,const char* leaf) {
 float distance2(Point a,Point b) {
     return (a.x-b.x)*(a.x-b.x)+(a.y-b.y)*(a.y-b.y)+(a.z-b.z)*(a.z-b.z);
 }
+bool renderWalkable(const RevcTriangle& t) {
+    const int ax=t.vertex[1][0]-t.vertex[0][0],ay=t.vertex[1][1]-t.vertex[0][1],az=t.vertex[1][2]-t.vertex[0][2];
+    const int bx=t.vertex[2][0]-t.vertex[0][0],by=t.vertex[2][1]-t.vertex[0][1],bz=t.vertex[2][2]-t.vertex[0][2];
+    const int64_t nx=int64_t(ay)*bz-int64_t(az)*by,ny=int64_t(az)*bx-int64_t(ax)*bz,nz=int64_t(ax)*by-int64_t(ay)*bx;
+    return ny && ny*ny>=nx*nx+nz*nz;
+}
 }
 
 bool World::open(const char* root) {
@@ -204,7 +210,7 @@ bool World::update(Point player,Point& shift,bool force,bool incremental,bool dr
             if(!stream.patches) {
                 for(int i=0;i<stream.count;++i){resident[i]=staging[i].triangle;material[i]=staging[i].material;}
                 residentCount=stream.count;droppedCount=stream.total-stream.count;
-                buildRenderTiles();
+                buildRenderTiles(true);
                 for(auto& patch:patches)patch.age=0;
                 for(int i=0;i<residentCount;++i){int cell[3];for(int k=0;k<3;++k)
                     cell[k]=int(std::floor((resident[i].vertex[0][k]+resident[i].vertex[1][k]+resident[i].vertex[2][k])/1536.f+(k==0 ? stream.anchor.x : k==1 ? stream.anchor.y : stream.anchor.z)/8));
@@ -261,30 +267,44 @@ void World::publishPatch(Candidate* faces,int count,uint32_t key) {
         return result;
     };
     auto erase=[&](uint32_t source){
-        int out=0;for(int i=0;i<residentCount;++i)if(residentSources[i]!=source){if(out!=i){resident[out]=resident[i];material[out]=material[i];residentSources[out]=residentSources[i];}++out;}
+        int out=0;for(int i=0;i<residentCount;++i)if(residentSources[i]!=source){if(out!=i){resident[out]=resident[i];material[out]=material[i];residentSources[out]=residentSources[i];walkableFace[out]=walkableFace[i];}++out;}
         residentCount=out;for(auto& patch:patches)if(patch.age && patch.key==source)patch.age=0;
     };
-    erase(key);
     // Old detail outside the near renderer cannot help coverage. Removing it
     // also keeps local fixed-point coordinates bounded across long drives.
-    for(int i=0;i<residentCount;)if(score(residentSources[i])>int64_t(48*64)*(48*64))erase(residentSources[i]);else ++i;
+    // Compact once, retaining exactly the old order. Published faces share a
+    // source tile: calculate its 64-bit distance once per run, not per face.
+    for(auto& patch:patches)if(patch.age && patch.key==key)patch.age=0;
+    int out=0;uint32_t previous=0;bool first=true,remove=false;
+    for(int i=0;i<residentCount;++i){const auto source=residentSources[i];
+        if(first || source!=previous){
+            remove=source==key || score(source)>int64_t(48*64)*(48*64);previous=source;first=false;
+            if(remove)for(auto& patch:patches)if(patch.age && patch.key==source)patch.age=0;
+        }
+        if(!remove){if(out!=i){resident[out]=resident[i];material[out]=material[i];residentSources[out]=source;walkableFace[out]=walkableFace[i];}++out;}
+    }
+    residentCount=out;
     const int capacity=ground ? TerrainCapacity : DecorationCapacity;
     int used=0;for(int i=0;i<residentCount;++i)used+=bool(residentSources[i]>>31)==ground;
     while(used+count>capacity){
         uint32_t worst=0;int64_t distance=-1;
-        for(int i=0;i<residentCount;++i)if(bool(residentSources[i]>>31)==ground){auto d=score(residentSources[i]);if(d>distance){distance=d;worst=residentSources[i];}}
+        uint32_t previous=0;bool first=true;
+        for(int i=0;i<residentCount;++i)if(bool(residentSources[i]>>31)==ground && (first || residentSources[i]!=previous)){
+            previous=residentSources[i];first=false;auto d=score(previous);if(d>distance){distance=d;worst=previous;}}
         if(distance<0)break;
         if(score(key)>distance){patchesDirty=true;return;}
-        int previous=residentCount;erase(worst);used-=previous-residentCount;
+        int previousCount=residentCount;erase(worst);used-=previousCount-residentCount;
     }
     const int delta[3]={int((stream.anchor.x-origin.x)*64),int((stream.anchor.y-origin.y)*64),int((stream.anchor.z-origin.z)*64)};
     for(int i=0;i<count && residentCount<Capacity;++i){const int out=residentCount++;resident[out]=faces[i].triangle;material[out]=faces[i].material;residentSources[out]=key;
-        for(auto& v:resident[out].vertex)for(int k=0;k<3;++k)v[k]+=delta[k];}
+        for(auto& v:resident[out].vertex)for(int k=0;k<3;++k)v[k]+=delta[k];
+        walkableFace[out]=renderWalkable(resident[out]);
+    }
     auto* oldest=&patches[0];for(auto& patch:patches)if(patch.age<oldest->age)oldest=&patch;
     oldest->key=key;oldest->age=++patchClock;++patchPublishes;if(!ground)++sceneryPublishes;patchesDirty=true;
 }
 
-bool World::updateCollision(Point player,Point lookahead,unsigned readLimit) {
+bool World::updateCollision(Point player,Point lookahead,unsigned readLimit,bool airborne) {
     collisionReadBytes=0;collisionUrgent=false;
     if(!loaded || !collisionFile || !std::isfinite(player.x+player.y+player.z+lookahead.x+lookahead.y+lookahead.z))return false;
     independentCollision=true;
@@ -354,7 +374,9 @@ bool World::updateCollision(Point player,Point lookahead,unsigned readLimit) {
         if(!collisionUrgent && tickGetCount()-started>=TICK_FREQ*4/1000)return true;
 #endif
     }
-    if(work.count) {
+    // Empty air is a valid completed aircraft query. Record it so a high
+    // checkpoint does not force a synchronous COL rescan every frame.
+    if(work.count || airborne) {
         int delta[3]={int((work.anchor.x-origin.x)*64),int((work.anchor.y-origin.y)*64),int((work.anchor.z-origin.z)*64)};
         for(int i=0;i<work.count;++i){collision[i]=pendingCollision[i];for(auto& v:collision[i].vertex)for(int k=0;k<3;++k)v[k]+=delta[k];}
         collisionCount=work.count;lastCollisionLoad=work.global;lastCollisionRequest=work.requested;++collisionVersion;
@@ -689,15 +711,12 @@ bool World::backdrop(const RevcTriangle& t,int x,int y,int z) const {
     return std::binary_search(excludedGeometry.get(),excludedGeometry.get()+excludedGeometryCount,hash);
 }
 
-void World::buildRenderTiles() {
+void World::buildRenderTiles(bool classify) {
     for(auto& tile:tiles)tile=RenderTile{};
     auto cell=[](int sum,int width){int v=sum/3;return v>=0 ? v/width : -((-v+width-1)/width);};
     for(int i=0;i<residentCount;++i) {
         const auto& t=resident[i];
-        const int ax=t.vertex[1][0]-t.vertex[0][0],ay=t.vertex[1][1]-t.vertex[0][1],az=t.vertex[1][2]-t.vertex[0][2];
-        const int bx=t.vertex[2][0]-t.vertex[0][0],by=t.vertex[2][1]-t.vertex[0][1],bz=t.vertex[2][2]-t.vertex[0][2];
-        const int64_t nx=int64_t(ay)*bz-int64_t(az)*by,ny=int64_t(az)*bx-int64_t(ax)*bz,nz=int64_t(ax)*by-int64_t(ay)*bx;
-        walkableFace[i]=ny && ny*ny>=nx*nx+nz*nz;
+        if(classify)walkableFace[i]=renderWalkable(t);
         // Floors must not pay for a dense wall in the same spatial bin.
         // Smaller wall groups also keep a nearby facade from being rejected
         // wholesale when only part of the detail budget remains.

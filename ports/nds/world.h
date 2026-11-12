@@ -15,7 +15,7 @@ public:
     void close();
     bool update(Point player,Point& shift,bool force=false,bool incremental=false,bool driving=false);
     // Prioritized collision work publishes independently of decorative snapshots.
-    bool updateCollision(Point player,Point lookahead,unsigned readLimit=16);
+    bool updateCollision(Point player,Point lookahead,unsigned readLimit=16,bool airborne=false);
     bool urgentCollisionRefresh() const {return collisionUrgent;}
     unsigned urgentCollisionRefreshes() const {return urgentRefreshes;}
     unsigned skippedCollisionBlocks() const {return collisionBlocksSkipped;}
@@ -138,7 +138,7 @@ private:
     RenderTile tiles[RenderTiles]{};
     uint16_t faceTile[Capacity]{},renderOrder[Capacity]{},selectedTiles[RenderTiles]{},selectedTileCosts[RenderTiles]{};
     int selectedTileCount=0;
-    void buildRenderTiles();
+    void buildRenderTiles(bool classify=false);
     int indexCount=0,residentCount=0,collisionCount=0,pedCount=0,droppedCount=0;
     FILE* chunks=nullptr;
     Point origin{},lastLoad{};

@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include "../../generated/fleet_data.h"
+#include "../../generated/service_fleet_data.h"
 namespace slice {
 namespace {
 float distance2(Point a,Point b){float x=a.x-b.x,z=a.z-b.z;return x*x+z*z;}
@@ -185,7 +185,7 @@ void Population::tick(Game& game,Point missionCar,int alert,int frames) {
         car.speed=stop ? std::max(0.f,car.speed-.01f*frames) : std::min(.10f,car.speed+.0015f*frames);
         Point before=car.position;
         if(car.speed && game.vehicleActorMove(car.position,si*car.speed*frames,-co*car.speed*frames,si,co,&car.tilt)) {
-            car.yaw=direction;car.wheelRoll=std::fmod(car.wheelRoll-std::sqrt(distance2(before,car.position))/fleetData::models[car.model%4].radius,6.2831853f);
+            car.yaw=direction;car.wheelRoll=std::fmod(car.wheelRoll-std::sqrt(distance2(before,car.position))/(car.model>=4 && car.model<7 ? fleetData::serviceModels[car.model-4] : fleetData::models[car.model%4]).radius,6.2831853f);
         } else car.speed=0;
     }
 }

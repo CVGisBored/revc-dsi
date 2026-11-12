@@ -14,7 +14,7 @@ void Garage::interact(Game& game,Street& job,Population& population,Campaign& ca
         float d=distance2(game.player,cars[i].position);if(d<best){best=d;choice=i;mission=-1;}
     }
     const auto* scripted=campaign.vehicles();
-    for(int i=0;i<campaign.vehicleCount();++i)if(!scripted[i].borrowed && scripted[i].placed && scripted[i].health>0) {
+    for(int i=0;i<campaign.vehicleCount();++i)if(!campaign.fireJob() && !scripted[i].borrowed && scripted[i].placed && scripted[i].health>0) {
         auto p=scripted[i].global;p.x-=anchor.x;p.y-=anchor.y;p.z-=anchor.z;
         float d=distance2(game.player,p);if(std::fabs(p.y-game.player.y)<2 && d<best){best=d;choice=-1;mission=i;}
     }
@@ -42,7 +42,9 @@ bool Garage::overlap(Point a,int yawA,int modelA,Point b,int yawB,int modelB) {
     float aa=yawA/5215.189175f,ab=yawB/5215.189175f;
     float ax[2]={std::cos(aa),std::sin(aa)},az[2]={std::sin(aa),-std::cos(aa)};
     float bx[2]={std::cos(ab),std::sin(ab)},bz[2]={std::sin(ab),-std::cos(ab)};
-    float wa=modelA==3 ? 1.05f : .95f,la=modelA==3 ? 3.1f : 2.4f,wb=modelB==3 ? 1.05f : .95f,lb=modelB==3 ? 3.1f : 2.4f;
+    auto width=[](int model){return model==VehicleModels::FireTruck ? 1.32f : model==VehicleModels::Spand || model==VehicleModels::MrWhoopee ? 1.05f : .95f;};
+    auto length=[](int model){return model==VehicleModels::FireTruck ? 4.2f : model==VehicleModels::Spand || model==VehicleModels::MrWhoopee ? 3.1f : 2.4f;};
+    float wa=width(modelA),la=length(modelA),wb=width(modelB),lb=length(modelB);
     for(const float* axis:{ax,az,bx,bz}) {
         float ca=wa*std::fabs(axis[0]*ax[0]+axis[1]*ax[1])+la*std::fabs(axis[0]*az[0]+axis[1]*az[1]);
         float cb=wb*std::fabs(axis[0]*bx[0]+axis[1]*bx[1])+lb*std::fabs(axis[0]*bz[0]+axis[1]*bz[1]);

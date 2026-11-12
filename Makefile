@@ -38,11 +38,15 @@ revc-test:
 	build/revc-host/revc_cinematic_frame_test
 	build/revc-host/revc_render_quality_test "$(CURDIR)/sdcard/revc"
 	build/revc-host/revc_cinematic_gameplay_test "$(CURDIR)/sdcard/revc"
+	build/revc-host/revc_map_raster_test
+	build/revc-host/revc_view_equivalence_test
 	python3 tools/validate_cinematics.py "$(CURDIR)/sdcard/revc"
 	build/revc-host/revc_vehicle_animation_test "$(CURDIR)/sdcard/revc"
 	build/revc-host/revc_fleet_test "$(CURDIR)/sdcard/revc"
 	build/revc-host/revc_runtime_test "$(CURDIR)/sdcard/revc"
 	build/revc-host/revc_player_motion_test
+	build/revc-host/revc_activities_test "$(CURDIR)/sdcard/revc"
+	build/revc-host/revc_mission_library_test "$(CURDIR)/sdcard/revc"
 	build/revc-host/revc_campaign_chain_test "$(CURDIR)/sdcard/revc"
 	build/revc-host/revc_oceanview_visibility_test "$(CURDIR)/sdcard/revc"
 	build/revc-host/revc_ground_test "$(CURDIR)/sdcard/revc"

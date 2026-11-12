@@ -371,20 +371,27 @@ void Game::bindGeometry(const RevcTriangle* triangles,int count) {
         minZ=std::min(minZ,int(v[2]));maxZ=std::max(maxZ,int(v[2]));
     }
     for(cellFixed=256;cellFixed<=512;cellFixed*=2) {
-    auto floorCell=[this](int value){int q=value/cellFixed;if(value%cellFixed<0)--q;return q*cellFixed;};
+    const unsigned cellShift=cellFixed==256 ? 8 : 9;
+    auto floorCell=[this,cellShift](int value){
+        int q=value>=0 ? value>>cellShift : -int((unsigned(-value)+cellFixed-1)>>cellShift);
+        return q*cellFixed;
+    };
     // Collision can advance before the visual origin. Keep its broad phase
     // attached to the actual snapshot instead of an old fixed [-64,128] box.
     gridOriginX=floorCell(minX-26);gridOriginZ=floorCell(minZ-26);
-    if((maxX+26-gridOriginX)/cellFixed>=GridSide || (maxZ+26-gridOriginZ)/cellFixed>=GridSide)continue;
+    if(((maxX+26-gridOriginX)>>cellShift)>=GridSide || ((maxZ+26-gridOriginZ)>>cellShift)>=GridSide)continue;
     uint32_t counts[GridCells]={};
-    auto bounds=[this](int i,int* range) {
+    auto bounds=[this,cellShift](int i,int* range) {
         const auto& t=mesh[i];
         int x0=std::min({t.vertex[0][0],t.vertex[1][0],t.vertex[2][0]});
         int x1=std::max({t.vertex[0][0],t.vertex[1][0],t.vertex[2][0]});
         int z0=std::min({t.vertex[0][2],t.vertex[1][2],t.vertex[2][2]});
         int z1=std::max({t.vertex[0][2],t.vertex[1][2],t.vertex[2][2]});
-        range[0]=std::max(0,(x0-gridOriginX-26)/cellFixed);range[1]=std::min(GridSide-1,(x1-gridOriginX+26)/cellFixed);
-        range[2]=std::max(0,(z0-gridOriginZ-26)/cellFixed);range[3]=std::min(GridSide-1,(z1-gridOriginZ+26)/cellFixed);
+        // Origins are floored below the complete mesh minus its margin, so
+        // these offsets are nonnegative. Both cell sizes are powers of two:
+        // shifts avoid eight software integer divisions per rebound triangle.
+        range[0]=(x0-gridOriginX-26)>>cellShift;range[1]=std::min(GridSide-1,(x1-gridOriginX+26)>>cellShift);
+        range[2]=(z0-gridOriginZ-26)>>cellShift;range[3]=std::min(GridSide-1,(z1-gridOriginZ+26)>>cellShift);
         return true;
     };
     for(int i=0;i<count;++i) {

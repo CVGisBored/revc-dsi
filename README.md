@@ -15,7 +15,22 @@ original engine or unrestricted SCM execution. Live gameplay and story movies
 share a 128×72 source resolution with a 256×144 letterboxed presentation.
 Gameplay uses reduced cutscene-derived character meshes; cinematic facial
 animation and full cinematic geometry are not reproduced in gameplay.
-Streaming can still stall. Save/load and full original-game feature parity remain incomplete.
+Streaming can still stall, and a sustained 30 FPS on physical DSi is not
+established. Save/load and full original-game feature parity remain incomplete.
+
+The performance pass reuses map scanlines and floor classifications, compacts
+streamed patches once, and reduces visibility and collision-grid arithmetic.
+Before/after checks preserve geometry, UVs, selection order and collision
+results. Deterministic ARM9 emulator component timings improved; physical DSi
+gameplay FPS still needs measurement.
+
+The Missions selector covers all 96 player-facing retail slots. The two opening
+slots share a controller. Alongside the authored missions and 65 early routes
+are 15 purchases, three service jobs and four Sparrow courses. The cutscene
+library includes all 70 mission sequences, the scripted departure and two
+startup movies. Progress lasts for the current journey. Original branching,
+economy and vehicle behavior are partially adapted.
+[Activity controls](ports/nds/README.md#property-purchases-and-side-activities)
 
 ## Layout
 

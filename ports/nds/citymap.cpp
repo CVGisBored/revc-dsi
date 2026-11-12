@@ -1,4 +1,5 @@
 #include "citymap.h"
+#include "map_raster.h"
 #include <nds.h>
 #include <cstdio>
 #include <cstring>
@@ -71,15 +72,7 @@ void CityMap::draw(Point player,int heading,const Point* objective,bool paused) 
     const bool changed=!backgroundValid || std::memcmp(columns,lastColumns,sizeof(columns)) || std::memcmp(rows,lastRows,sizeof(rows));
     auto restore=[&](int x0,int y0,int x1,int y1) {
         x0=std::max(0,x0)&~1;x1=std::min(256,x1+1)&~1;y0=std::max(Top,y0);y1=std::min(Bottom,y1);
-        for(int y=y0;y<y1;++y) {
-            int ty=rows[y-Top];
-            for(int x=x0;x<x1;x+=2) {
-                int tx=columns[x],tx2=columns[x+1];
-                unsigned a=ty>=0 && ty<256 && tx>=0 && tx<256 ? pixels[ty*256+tx] : 1;
-                unsigned b=ty>=0 && ty<256 && tx2>=0 && tx2<256 ? pixels[ty*256+tx2] : 1;
-                v[(y*256+x)/2]=a|(b<<8);
-            }
-        }
+        restoreMapRows(pixels.get(),columns,rows,v,x0,y0,x1,y1);
     };
     if(changed) {
         restore(0,Top,256,Bottom);

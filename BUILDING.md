@@ -88,8 +88,12 @@ repeating that step. Logo compaction retains a local backup, so remove that
 specific ignored backup if deliberately changing the source logo movies.
 
 The ordered recipe generates mission headers directly from local SCM/GXT data,
-builds world/physics/material packs, converts 15 story/mission scenes to 30 FPS
-VCV3 at 128×72, and prepares the two six-FPS startup movies. The final
+builds world/physics/material packs, converts 68 authored original cutscenes
+plus the scripted departure and two SCM endings to 30 FPS VCV3 at 128×72, and prepares two six-FPS
+startup movies. `stage_cutscene_library` converts remaining supported scenes;
+`stage_campaign_library` then creates the 97-slot catalog, early objectives and
+movie availability flags. Inspect `reports/cutscene-library.json` for conversion
+failures. The library converter invokes the SCM adapter for GSPOT and FIST. The campaign staging step also generates the Sparrow, service vehicles, property transactions and aerial checkpoint data. The final
 `stage_cinematic_gameplay` step must run after older actor/fleet conversions:
 the shared atlases and their model UVs are a matched set.
 
@@ -119,6 +123,20 @@ For release-style gameplay, retain `REVC_GAMEPLAY_CINEMA_RESOLUTION=ON` and
 `REVC_INSPECT_OCEAN_VIEW=OFF`, `REVC_INSPECT_KEN_SPAWN=OFF` in the CMake cache.
 The 128×72 scene is presented at 256×144; the bottom screen stays native size.
 Host checks do not establish a locked 30 FPS or physical DSi compatibility.
+
+After `make revc`, the optional component benchmark can be built with:
+
+```sh
+cmake --build build/revc-nds --target revc_performance_probe -j4
+```
+
+This produces `build/revc-nds/revc_performance_probe.nds`, separate from the
+gameplay ROM. It runs a fixed forward/return streaming workload, prints ARM9
+component timings, read counts and geometry hashes, and redraws the moving
+map every fourth step. Its extended-cache case uses more cache memory, not a
+different CPU speed. It does not draw a complete gameplay frame, so its
+timings cannot be converted directly into gameplay FPS. Both ROMs embed local
+game assets and should remain outside the source repository.
 
 ## 6. Local device and emulator checks
 

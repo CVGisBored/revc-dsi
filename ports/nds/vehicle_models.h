@@ -4,7 +4,7 @@
 namespace slice {
 class VehicleModels {
 public:
-    static constexpr int Count=4;
+    enum Id {Sentinel,Taxi,Admiral,Spand,FireTruck,Police,MrWhoopee,Count};
     struct Mesh {int count=0;std::unique_ptr<RevcTriangle[]> triangles;std::unique_ptr<RevcUV[]> uv;VehicleAnimation::Rig rig;};
     struct Model {Mesh detail,far;Point seat{};float radius=.35f,wheelbase=3.3f;};
     bool open(const char* root);

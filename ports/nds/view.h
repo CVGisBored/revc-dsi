@@ -11,31 +11,36 @@ struct ViewFrustum {
     static int bin(int value){return value>=0 ? value/32 : -((-value+31)/32);}
     ViewFrustum(Point camera,float sine,float cosine,float pitchSine,float pitchCosine):
         x(int(camera.x*64)),y(int(camera.y*64)),z(int(camera.z*64)),si(int(sine*4096)),co(int(cosine*4096)),sp(int(pitchSine*4096)),cp(int(pitchCosine*4096)){}
+    static unsigned outside(int side,int depth,int up) {
+        return unsigned(side*4096 < -depth*3480-96*4096) |
+            (unsigned(side*4096 > depth*3480+96*4096)<<1) |
+            (unsigned(up*4096 < -depth*2610-96*4096)<<2) |
+            (unsigned(up*4096 > depth*2610+96*4096)<<3) |
+            (unsigned(depth < -64)<<4) | (unsigned(depth > 80*64+64)<<5);
+    }
     bool triangle(const RevcTriangle& t) const {
-        int outside[6]={};
+        unsigned common=63;
         for(const auto& v:t.vertex) {
             int dx=v[0]-x,dy=v[1]-y,dz=v[2]-z;
             int f=(dx*si-dz*co)>>12,s=(dx*co+dz*si)>>12,d=(f*cp-dy*sp)>>12,u=(dy*cp+f*sp)>>12;
-            outside[0]+=s*4096 < -d*3480-96*4096;outside[1]+=s*4096>d*3480+96*4096;
-            outside[2]+=u*4096 < -d*2610-96*4096;outside[3]+=u*4096>d*2610+96*4096;
-            outside[4]+=d < -64;outside[5]+=d>80*64+64;
+            common&=outside(s,d,u);
+            // Once no plane excludes all vertices seen so far, the remaining
+            // vertex cannot make this triangle rejectable by the old test.
+            if(!common)return true;
         }
-        for(int n:outside)if(n==3)return false;
-        return true;
+        return false;
     }
     bool bounds(const int16_t low[3],const int16_t high[3],int& nearest) const {
-        int outside[6]={};nearest=32767;
+        unsigned common=63;nearest=32767;
         for(int corner=0;corner<8;++corner) {
             int dx=((corner&1)?high[0]:low[0])-x,dy=((corner&2)?high[1]:low[1])-y,dz=((corner&4)?high[2]:low[2])-z;
-            int forward=(dx*si-dz*co)>>12,side=(dx*co+dz*si)>>12;
-            int depth=(forward*cp-dy*sp)>>12,up=(dy*cp+forward*sp)>>12;
+            int forward=(dx*si-dz*co)>>12;
+            int depth=(forward*cp-dy*sp)>>12;
             nearest=std::min(nearest,depth);
-            outside[0]+=side*4096 < -depth*3480-96*4096;outside[1]+=side*4096>depth*3480+96*4096;
-            outside[2]+=up*4096 < -depth*2610-96*4096;outside[3]+=up*4096>depth*2610+96*4096;
-            outside[4]+=depth < -64;outside[5]+=depth>80*64+64;
+            // Still visit every corner for exactly the same sorting depth.
+            if(common){int side=(dx*co+dz*si)>>12,up=(dy*cp+forward*sp)>>12;common&=outside(side,depth,up);}
         }
-        for(int n:outside)if(n==8)return false;
-        return true;
+        return !common;
     }
 };
 // Keep the gameplay camera outside dynamic vehicles, which are absent from

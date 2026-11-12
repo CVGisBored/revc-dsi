@@ -1,10 +1,12 @@
 #include "campaign.h"
+#include "vehicle_models.h"
 #include "campaign_data.h"
 #include "ken_missions_data.h"
 #include "expanded_missions_data.h"
 #include <cmath>
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 namespace slice {
 namespace {
 Point subtract(Point a,Point b){return {a.x-b.x,a.y-b.y,a.z-b.z};}
@@ -17,15 +19,209 @@ bool placeNear(Game& game,Point& p,float tolerance) {
 }
 bool within(Point a,Point b,float x,float z,float h){return std::fabs(a.x-b.x)<=x && std::fabs(a.z-b.z)<=z && std::fabs(a.y-b.y)<=h;}
 }
+
+void Campaign::finishCutscene(bool played){
+    sceneCue=nullptr;
+    if(libraryIndex>=0){
+        // Stay at the briefing when a movie fails. It always has a manual exit.
+        if(stage==LibraryBriefing && played)advanceBriefing(true);
+    }else if(played && briefing())advanceBriefing(true);
+}
+bool Campaign::selectMission(unsigned index){
+    if(index>=MissionLibrary::count())return false;
+    const auto& m=MissionLibrary::mission(index);if(m.kind==MissionLibrary::Catalog)return false;
+    clearSetpiece();sceneCue=nullptr;aboard=passengerPlaced=dressed=false;stageClock=phonePage=0;
+    activityStarted=shortFunds=airborne=false;workTicks=flightTicks=0;
+    if(m.kind==MissionLibrary::Adapted){libraryIndex=-1;missionNumber=std::max(1,m.adapted);stage=m.adapted ? Office : Hotel;return true;}
+    if(!m.routeCount)return false;
+    libraryIndex=index;libraryStep=libraryScene=0;stage=LibraryBriefing;if(!activity())cueLibraryScene();return true;
+}
+void Campaign::cueLibraryScene(){
+    if(libraryIndex<0 || sceneCue)return;
+    const auto& m=MissionLibrary::mission(libraryIndex);
+    while(libraryScene<m.movieCount){
+        const auto& candidate=MissionLibrary::movie(m.movies[libraryScene]);
+        const bool ending=!std::strcmp(candidate.name,"gspot") || !std::strcmp(candidate.name,"fist") || !std::strcmp(candidate.name,"finale") || !std::strcmp(candidate.name,"ass_2") || !std::strcmp(candidate.name,"col_5b") || !std::strcmp(candidate.name,"bank_3b");
+        if(ending && libraryStep<m.routeCount+(m.action ? 1u : 0u))return;
+        if(!ending && libraryScene && libraryStep*m.movieCount<m.routeCount*libraryScene)return;
+        const auto& movie=MissionLibrary::movie(m.movies[libraryScene++]);
+        if(movie.available){sceneCue=movie.name;return;}
+    }
+}
+void Campaign::tickLibrary(Game& game,Street& actors,Point anchor,int frames,bool action){
+    const auto& m=MissionLibrary::mission(libraryIndex);
+    if(sceneCue)return;
+    if(stage==LibraryOffer){if(!actors.inCar && within(add(game.player,anchor),m.start,6,6,8)){stage=LibraryBriefing;cueLibraryScene();}return;}
+    if(stage==LibraryBriefing){if(action)advanceBriefing();return;}
+    if(stage==LibraryPassed){
+        if((stageClock+=frames)<180)return;
+        if(activity()){libraryIndex=-1;stage=FreeRoam;return;}
+        const int next=MissionLibrary::nextStory(libraryIndex);
+        if(next<0){libraryIndex=-1;stage=CampaignComplete;}else{selectMission(next);stage=LibraryOffer;sceneCue=nullptr;libraryScene=0;}
+        return;
+    }
+    if(activity()){tickActivity(game,actors,anchor,frames,action);return;}
+    if(stage==LibraryCombat){
+        bool alive=false;for(int i=0;i<npcCountValue;++i)alive|=people[i].health>0;
+        for(int i=0;i<vehicleCountValue;++i)alive|=cars[i].health>0;
+        if(alive)return;clearSetpiece();stage=LibraryRoute;++libraryStep;
+    }
+    if(stage!=LibraryRoute)return;
+    if(libraryStep<m.routeCount && within(add(game.player,anchor),m.route[libraryStep],6,6,8))++libraryStep;
+    if(libraryStep==m.routeCount && m.action){
+        // Source mission locations, bounded stand-in combat. Reuse the existing
+        // actor/car pools so content breadth does not increase rendering load.
+        clearSetpiece();const Point p=m.route[m.routeCount-1];
+        if(m.action==1){npcCountValue=std::min(4u,m.targets);for(int i=0;i<npcCountValue;++i){people[i].global={p.x+(i%2 ? 1.25f : -1.25f),p.y,p.z+(i/2 ? 1.25f : -1.25f)};people[i].health=75;people[i].hostile=true;}}
+        else {vehicleCountValue=std::min(3u,m.targets);for(int i=0;i<vehicleCountValue;++i){cars[i].global={p.x+(int(i)-1)*3.5f,p.y,p.z+3};cars[i].health=100;cars[i].model=i%2;}}
+        actors.grantPistol(12,std::max(actors.reserve,180));stage=LibraryCombat;return;
+    }
+    cueLibraryScene();if(sceneCue || libraryStep<m.routeCount)return;
+    // Early routes have their own completion label; they do not claim SCM completion.
+    if(!finished[m.id]){finished[m.id]=true;++completedCount;actors.cash+=m.reward;}
+    actors.alert=0;stage=LibraryPassed;stageClock=0;
+}
+
+bool Campaign::activity() const {
+    return libraryIndex>=0 && MissionLibrary::mission(libraryIndex).kind==MissionLibrary::Activity;
+}
+
+bool Campaign::activityInput(Point global) const {
+    if(!activity() || stage!=LibraryRoute)return false;
+    const auto& m=MissionLibrary::mission(libraryIndex);
+    if(!activityStarted || m.action==MissionLibrary::Purchase)return within(global,m.start,8,8,8);
+    return (m.action==MissionLibrary::Fire || m.action==MissionLibrary::Sales) &&
+        libraryStep<m.routeCount && within(global,m.route[libraryStep],11,11,6);
+}
+
+void Campaign::leaveAircraft(Game& game,Point anchor) {
+    if(!airborne)return;
+    game.player=subtract(launchGround,anchor);
+    game.resetPlayerPhysics();airborne=false;
+}
+
+void Campaign::fly(Game& game,Point anchor,float dx,float dz,int climb,int ticks,int heading) {
+    if(!airborne || stage!=LibraryRoute)return;
+    // World positions stay local to the streaming anchor, as for the player.
+    // Sweep the cabin centre to stop at loaded structures, including rooftops.
+    flightYaw=heading;
+    Point next=game.player;
+    next.x+=dx*.28f*ticks;next.z+=dz*.28f*ticks;
+    next.y=std::max(2.f-anchor.y,std::min(190.f-anchor.y,next.y+climb*.18f*ticks));
+    const Point lift={0,1.1f,0};
+    if(game.lineClear(add(game.player,lift),add(next,lift)))game.player=next;
+    Point floor=game.player;
+    floor.y+=1.2f;
+    if(game.placeActor(floor,5))game.player.y=std::max(game.player.y,floor.y+.18f);
+}
+
+void Campaign::completeActivity(Street& actors) {
+    const auto& m=MissionLibrary::mission(libraryIndex);
+    if(!finished[m.id]){finished[m.id]=true;++completedCount;}
+    // Services and time trials pay for each completed run. A purchase has no payout.
+    actors.cash+=m.reward;
+    clearSetpiece();stage=LibraryPassed;stageClock=0;
+}
+
+void Campaign::tickActivity(Game& game,Street& actors,Point anchor,int frames,bool action) {
+    const auto& m=MissionLibrary::mission(libraryIndex);
+    const Point here=add(game.player,anchor);
+    if(stage!=LibraryRoute && stage!=LibraryCombat)return;
+    if(m.action==MissionLibrary::Purchase){
+        if(!finished[m.id]){
+            shortFunds=actors.cash<int(m.targets);
+            if(!action || actors.inCar || actors.transitioning() || !within(here,m.start,8,8,8) || shortFunds)return;
+            actors.cash-=int(m.targets);finished[m.id]=true;++completedCount;
+            libraryStep=1;cueLibraryScene();
+            if(sceneCue)return;
+        }
+        completeActivity(actors);return;
+    }
+    const int serviceModel=m.action==MissionLibrary::Fire ? VehicleModels::FireTruck :
+        m.action==MissionLibrary::Patrol ? VehicleModels::Police : VehicleModels::MrWhoopee;
+    if(!activityStarted){
+        if(m.action!=MissionLibrary::Flight && !vehicleCountValue){
+            vehicleCountValue=1;cars[0].global=m.start;cars[0].model=serviceModel;cars[0].health=100;
+        }
+        if(!within(here,m.start,8,8,8) || !action || actors.transitioning())return;
+        if(m.action==MissionLibrary::Flight){
+            if(actors.inCar)return;
+            launchGround=here;airborne=true;game.player.y+=1.5f;
+        }else{
+            if(!actors.inCar || actors.carModel!=serviceModel)return;
+            clearSetpiece();
+            if(m.action==MissionLibrary::Patrol)actors.grantPistol(12,std::max(actors.reserve,72));
+        }
+        activityStarted=true;return;
+    }
+    if(m.action==MissionLibrary::Flight){
+        flightTicks+=frames;flightAltitude=int(std::round(here.y));
+        const auto& course=MissionLibrary::course(m.id);
+        if(libraryStep<course.count){
+            if(within(here,course.points[libraryStep],7,7,5))++libraryStep;
+        }else if(within(here,launchGround,7,7,2)){
+            leaveAircraft(game,anchor);completeActivity(actors);
+        }
+        return;
+    }
+    const Point location=m.route[libraryStep];
+    if(m.action==MissionLibrary::Patrol){
+        if(stage==LibraryCombat){
+            if(people[0].health>0)return;
+        }else{
+            if(!within(here,location,24,24,8))return;
+            beginFight(location,Civilian,true);stage=LibraryCombat;return;
+        }
+    }else if(m.action==MissionLibrary::Fire){
+        if(!vehicleCountValue){vehicleCountValue=1;cars[0].global=location;cars[0].health=100;}
+        if(!actors.inCar || actors.carModel!=serviceModel || actors.transitioning() || !action || std::fabs(actors.speed)>.025f ||
+           !within(here,location,10,10,6))return;
+        workTicks+=frames;if(workTicks<90)return;
+    }else{
+        if(!npcCountValue){npcCountValue=1;people[0].global={location.x+1.4f,location.y,location.z};people[0].health=100;}
+        if(!actors.inCar || actors.carModel!=serviceModel || actors.transitioning() || std::fabs(actors.speed)>.025f || !action ||
+           !within(here,location,7,7,5))return;
+    }
+    clearSetpiece();workTicks=0;stage=LibraryRoute;
+    if(++libraryStep==m.routeCount)completeActivity(actors);
+}
+
+const char* Campaign::activityObjective() const {
+    const auto& m=MissionLibrary::mission(libraryIndex);
+    if(stage==LibraryPassed && m.action==MissionLibrary::Flight){
+        std::snprintf(statusText,sizeof(statusText),"Course complete in %u:%02u. +$%u",flightTicks/3600,(flightTicks/60)%60,m.reward);
+        return statusText;
+    }
+    if(stage==LibraryPassed)return m.action==MissionLibrary::Purchase ? "Property owned" : "Job complete. Payment received.";
+    if(m.action==MissionLibrary::Purchase){
+        std::snprintf(statusText,sizeof(statusText),shortFunds ? "Need $%u to buy this property." : "On foot at marker: R to buy $%u",m.targets);
+    }else if(!activityStarted)return m.action==MissionLibrary::Flight ? "Go to launch site on foot. R: fly" : "Take marked vehicle (L+R). R at dispatch to start";
+    else if(m.action==MissionLibrary::Flight){
+        const auto& c=MissionLibrary::course(m.id);
+        if(libraryStep>=c.count)return "Return to launch. L to land.";
+        std::snprintf(statusText,sizeof(statusText),"Gate %u/%u. Height %d/%dm. Time %us",libraryStep+1,c.count,flightAltitude,int(std::round(c.points[libraryStep].y)),flightTicks/60);
+    }else if(m.action==MissionLibrary::Fire)
+        std::snprintf(statusText,sizeof(statusText),"Fire %u/%u. Stop truck. Hold R: hose %u%%",libraryStep+1,m.routeCount,100u*workTicks/90);
+    else if(m.action==MissionLibrary::Patrol)
+        std::snprintf(statusText,sizeof(statusText),"Suspect %u/%u. %s",libraryStep+1,m.routeCount,stage==LibraryCombat ? "On foot: R to attack" : "Go to dispatch.");
+    else std::snprintf(statusText,sizeof(statusText),"Customer %u/%u. Stop car near buyer. R: sell",libraryStep+1,m.routeCount);
+    return statusText;
+}
+
 Point Campaign::giver() const {return missionNumber==7 ? extraData::Avery : missionNumber>=5 ? extraData::Cortez : missionData::Office;}
 Point Campaign::spawn(){return missionData::Spawn;}
 void Campaign::clearSetpiece(){++vehicleEpoch;npcCountValue=vehicleCountValue=0;for(auto& p:people)p=Npc{};for(auto& p:cars)p=Vehicle{};}
 void Campaign::reset(){*this=Campaign{};passengerGlobal=missionData::Passenger;}
-void Campaign::finishCall(){if(stage==Phone){stage=FirstComplete;completedCount=1;stageClock=0;}}
-bool Campaign::hasTarget() const {return stage!=Phone && stage!=Briefing && stage!=Passed && stage!=FirstComplete && stage!=CampaignComplete && stage!=Failed;}
+void Campaign::finishCall(){if(stage==Phone){stage=FirstComplete;if(!finished[2]){finished[1]=finished[2]=true;++completedCount;}stageClock=0;}}
+bool Campaign::hasTarget() const {return stage!=FreeRoam && stage!=Phone && stage!=Briefing && stage!=Passed && stage!=FirstComplete && stage!=CampaignComplete && stage!=Failed && stage!=LibraryBriefing && stage!=LibraryPassed;}
 bool Campaign::hasPassenger() const {return (stage==Escort || stage==Escape || stage==AmmoShop || stage==ReturnHotel) && passengerPlaced;}
 Point Campaign::target(Point anchor) const {
     Point p=giver();
+    if(libraryIndex>=0){const auto& m=MissionLibrary::mission(libraryIndex);
+        if(activity() && !activityStarted)return subtract(m.start,anchor);
+        if(airborne){const auto& course=MissionLibrary::course(m.id);return subtract(libraryStep<course.count ? course.points[libraryStep] : launchGround,anchor);}
+        if(stage==LibraryCombat){for(int i=0;i<npcCountValue;++i)if(people[i].health>0)return subtract(people[i].global,anchor);for(int i=0;i<vehicleCountValue;++i)if(cars[i].health>0)return subtract(cars[i].global,anchor);}
+        return subtract(stage==LibraryOffer ? m.start : m.route[std::min(libraryStep,m.routeCount-1)],anchor);}
     switch(stage) {
     case Hotel:case Phone:case ReturnHotel:p=missionData::Hotel;break;
     case Clothes:case RiotClothes:p=missionData::Clothes;break;
@@ -73,9 +269,9 @@ void Campaign::startObjectives(){
     else if(missionNumber==6){stage=MallMeet;dressed=false;}
     else {stage=GolfClothes;dressed=false;}
 }
-void Campaign::advanceBriefing(bool skip){if(stage==Briefing && (skip || ++phonePage>=pages()))startObjectives();}
-void Campaign::pass(Street& actors,int reward){stage=Passed;stageClock=0;actors.cash+=reward;actors.alert=0;completedCount=missionNumber+1;clearSetpiece();aboard=passengerPlaced=false;}
-void Campaign::retry(Street& actors){if(stage!=Failed)return;actors.health=actors.carHealth=100;actors.phase=Street::Vehicle;actors.alert=0;actors.guardHealth=0;clearSetpiece();aboard=passengerPlaced=false;stage=Office;stageClock=0;}
+void Campaign::advanceBriefing(bool skip){if(stage==LibraryBriefing){stage=LibraryRoute;phonePage=0;return;}if(stage==Briefing && (skip || ++phonePage>=pages()))startObjectives();}
+void Campaign::pass(Street& actors,int reward){stage=Passed;stageClock=0;static const unsigned ids[]={3,4,5,6,7,8,18};const auto id=ids[missionNumber-1];if(!finished[id]){actors.cash+=reward;finished[id]=true;++completedCount;}actors.alert=0;clearSetpiece();aboard=passengerPlaced=false;}
+void Campaign::retry(Street& actors){if(stage!=Failed)return;actors.health=actors.carHealth=100;actors.phase=Street::Vehicle;actors.alert=0;actors.guardHealth=0;clearSetpiece();aboard=passengerPlaced=false;stage=libraryIndex>=0 ? LibraryBriefing : Office;libraryStep=libraryScene=0;sceneCue=nullptr;activityStarted=shortFunds=airborne=false;workTicks=flightTicks=0;if(libraryIndex>=0 && !activity())cueLibraryScene();stageClock=0;}
 void Campaign::follow(Game& game,Street& actors,Point anchor,int frames){
     Point q=passenger(anchor);followerMoving=followerRunning=false;
     if(!passengerPlaced){if(!game.placeActor(q,4))return;passengerPlaced=true;}
@@ -91,10 +287,11 @@ void Campaign::follow(Game& game,Street& actors,Point anchor,int frames){
     passengerGlobal=add(q,anchor);
 }
 void Campaign::tick(Game& game,Street& actors,Point anchor,int frames,bool action){
-    if(game.state!=Game::Playing || stage==CampaignComplete || stage==Failed)return;
+    if(game.state!=Game::Playing || stage==CampaignComplete || stage==FreeRoam || stage==Failed)return;
     frames=std::max(0,std::min(frames,30));attackCooldown=std::max(0,attackCooldown-frames);
-    if(actors.health<=0 || (actors.inCar && actors.carHealth<=0)){stage=Failed;return;}
-    if(stage==FirstComplete || stage==Passed){if((stageClock+=frames)>=180){if(stage==Passed)++missionNumber;stage=missionNumber>MissionCount ? CampaignComplete : Office;stageClock=0;}return;}
+    if(actors.health<=0 || (actors.inCar && actors.carHealth<=0)){leaveAircraft(game,anchor);stage=Failed;return;}
+    if(libraryIndex>=0){tickLibrary(game,actors,anchor,frames,action);if(stage!=LibraryCombat && !(activity() && setpiece()))return;}
+    if(stage==FirstComplete || stage==Passed){if((stageClock+=frames)>=180){if(stage==Passed)++missionNumber;stage=Office;if(missionNumber>MissionCount){int next=MissionLibrary::nextStory();if(next>=0){selectMission(next);stage=LibraryOffer;sceneCue=nullptr;libraryScene=0;}else stage=CampaignComplete;}stageClock=0;}return;}
     if(stage==Briefing){if(action)advanceBriefing();return;}
     const Point p=add(game.player,anchor);
     if(stage==Escort || stage==Escape || stage==AmmoShop || stage==ReturnHotel)follow(game,actors,anchor,frames);
@@ -114,7 +311,7 @@ void Campaign::tick(Game& game,Street& actors,Point anchor,int frames,bool actio
         n.global=add(q,anchor);
     }
     for(int i=0;i<vehicleCountValue;++i){auto& v=cars[i];if(v.placed)continue;Point q=subtract(v.global,anchor);if(distance2(q,game.player)>70*70)continue;
-        if(game.placeActor(q,5)){v.global=add(q,anchor);v.placed=true;}}
+        if(libraryIndex>=0 ? placeNear(game,q,5) : game.placeActor(q,5)){v.global=add(q,anchor);v.placed=true;}}
     switch(stage){
     case Hotel:if(!actors.inCar && within(p,missionData::Hotel,1.8f,1.8f,1.5f)){stage=Phone;phonePage=0;}break;
     case Phone:if(action && ++phonePage>=missionData::PhonePages)finishCall();break;
@@ -178,12 +375,22 @@ bool Campaign::strike(Game& game,Street& actors,Point anchor,float sine,float co
     return hit>=0;
 }
 const char* Campaign::title() const {
+    if(libraryIndex>=0 && stage!=Failed)return MissionLibrary::mission(libraryIndex).title;
+    if(stage==FreeRoam)return "Vice City";
     if(stage==Hotel)return "In the Beginning...";if(stage==Phone)return "An Old Friend";
     if(stage==FirstComplete)return "Opening mission complete";if(stage==Failed)return "Mission failed - R to retry";
     if(stage==CampaignComplete)return "Mission chain complete";
     static const char* names[]={"The Party","Back Alley Brawl","Jury Fury","Riot","Treacherous Swine","Mall Shootout","Four Iron"};return names[std::min(MissionCount-1,missionNumber-1)];
 }
 const char* Campaign::objective() const {
+    if(libraryIndex>=0 && stage!=Failed){
+        if(activity())return activityObjective();
+        if(stage==LibraryOffer)return "Go to the contact. Early adaptation.";
+        if(stage==LibraryBriefing)return "Early route. R: begin / L: begin";
+        if(stage==LibraryPassed)return "ADAPTATION COMPLETE - next contact";
+        if(stage==LibraryCombat)return npcCountValue ? "Defeat attackers. R: fire." : "Disable target vehicles. R: fire.";
+        std::snprintf(statusText,sizeof(statusText),"Early route: checkpoint %u/%u",libraryStep+1,MissionLibrary::mission(libraryIndex).routeCount);return statusText;
+    }
     switch(stage){
     case Hotel:return "Go to Ocean View. Enter on foot.";case Phone:return "Watch the hotel phone call.";
     case FirstComplete:return "Ocean View reached. Ken is next.";case Office:return missionNumber==7 ? "Visit Avery at the building site." : missionNumber>=5 ? "Visit Cortez at the yacht on foot." : "Visit Ken's office on foot.";
@@ -205,14 +412,26 @@ const char* Campaign::objective() const {
     case GolfClothes:return "Collect your country club membership.";
     case GolfEntrance:return "Enter Leaf Links country club on foot.";
     case GolfFight:return "Find and eliminate the businessman.";
-    case CampaignComplete:return "Eight missions complete. Free roam.";case Failed:return "R: retry mission / Select: restart";
+    case LibraryOffer:case LibraryBriefing:case LibraryRoute:case LibraryCombat:case LibraryPassed:return "";
+    case FreeRoam:return "Free roam. Start: missions";
+    case CampaignComplete:return "Story routes complete. Free roam.";case Failed:return "R: retry mission / Select: restart";
     }
     return "";
 }
 const char* Campaign::dialogue() const {
+    if(stage==LibraryBriefing && activity()){
+        switch(MissionLibrary::mission(libraryIndex).action){
+        case MissionLibrary::Purchase:return "Visit the marked property.\nBuy on foot with cash using R.";
+        case MissionLibrary::Fire:return "Take the marked fire truck.\nStop by each fire. Hold R: hose.";
+        case MissionLibrary::Patrol:return "Take the marked police cruiser.\nStop three suspects on foot.";
+        case MissionLibrary::Sales:return "Take the marked Mr. Whoopee.\nStop near each buyer. Press R.";
+        default:return "Fly the marked gates, then land.\nD-pad: fly. R: climb. L: descend.";
+        }
+    }
+    if(stage==LibraryBriefing)return "Early mission adaptation. Full\noriginal scripting still pending.";
     if(stage==Phone && phonePage<missionData::PhonePages)return missionData::Phone[phonePage];
     if(stage==Briefing && missionNumber>=1 && missionNumber<=4){const auto& b=kenData::Briefings[missionNumber-1];if(phonePage<b.count)return b.pages[phonePage];}
     if(stage==Briefing && missionNumber>=5 && missionNumber<=MissionCount){const auto& b=extraData::Briefings[missionNumber-5];if(phonePage<b.count)return b.pages[phonePage];}return "";
 }
-unsigned Campaign::pages() const {return stage==Briefing ? (missionNumber<=4 ? kenData::Briefings[missionNumber-1].count : extraData::Briefings[missionNumber-5].count) : missionData::PhonePages;}
+unsigned Campaign::pages() const {if(stage==LibraryBriefing)return 1;return stage==Briefing ? (missionNumber<=4 ? kenData::Briefings[missionNumber-1].count : extraData::Briefings[missionNumber-5].count) : missionData::PhonePages;}
 }
