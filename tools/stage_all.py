@@ -35,6 +35,8 @@ def steps(game):
             '--missions', '1', '2', '3', '4', '5', '6', '7', '8', '18',
             '--fps', '30', '--compact', '--motion']),
         ('stage_departure', [sys.executable, 'tools/stage_departure.py', str(game), '--fps', '30', '--motion']),
+        ('stage_cutscene_library', [sys.executable, 'tools/stage_cutscene_library.py', str(game)]),
+        ('stage_campaign_library', [sys.executable, 'tools/stage_campaign_library.py', str(game)]),
         ('stage_cinematic_gameplay', [sys.executable, 'tools/stage_cinematic_gameplay.py', str(game)]),
     ]
     return result

@@ -13,6 +13,7 @@ def validate(root):
  result=[]
  for path in sorted((root/'cutscenes').glob('*.vcv')):
   data=path.read_bytes();h=struct.unpack_from('<4s4H7I',data);magic,w,height,fps,subs,frames,rate,audio,duration,maximum,rawbytes,stride=h;codec=int(chr(magic[-1]));assert frames==(duration*fps+999)//1000 and rawbytes==512+w*height
+  subtitles=list(struct.iter_unpack('<II80s',data[40:40+subs*stride]));assert all(a<b<=duration and b'\0'in text and (i==0 or a>=subtitles[i-1][0]) for i,(a,b,text) in enumerate(subtitles))
   start=40+subs*stride;sizes=struct.unpack_from('<%dI'%frames,data,start);audio_start=start+frames*4;position=audio_start+audio
   old=(ctypes.c_ubyte*rawbytes)();out=(ctypes.c_ubyte*rawbytes)();scratch=(ctypes.c_ubyte*(rawbytes+144))();reference=None;digest=hashlib.sha256();chain=0
   for i,size in enumerate(sizes):

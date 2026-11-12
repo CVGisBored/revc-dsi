@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 root=Path(__file__).resolve().parents[1];work=root/'build/emulator'
 session=json.loads((work/'session.json').read_text())
+work=Path(session.get('tool_root',work))
 env=os.environ.copy();env.update(DISPLAY=session['display'],LD_LIBRARY_PATH=str(work/'local/usr/lib'))
 tool=str(work/'local/usr/bin/xdotool')
 parser=argparse.ArgumentParser(description=__doc__)

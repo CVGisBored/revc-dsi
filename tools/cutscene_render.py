@@ -56,7 +56,10 @@ def frame_globals(local,parents,tags,names,nodes,time):
 
 class Actor:
     def __init__(self,archive,spec,animations,renderer):
-        self.spec=spec;data=archive.read(spec['model']+'.dff');self.nodes=animations[spec['animation']]
+        self.spec=spec;data=archive.read(spec['model']+'.dff')
+        # reVC SetCutsceneAnim leaves the clump without an association when a
+        # requested clip is absent (for example the unused Avery in bud_2).
+        self.nodes=animations.get(spec.get('animation'),{})
         self.skinned=None
         try:self.skinned=skin(data)
         except (ValueError,KeyError):pass
@@ -136,7 +139,7 @@ class Renderer:
                     points=np.asarray([place(obj,p) for p in v])-origin
                     self.static.append((points,self.batches(faces,uv,light,mats,textures)))
             except KeyError:continue
-        if spec['name'] in ('law_1b','col_1','col_2'):
+        if spec['name']=='law_1b' or spec['name'].startswith('col_'):
             # These yacht meshes are CREATE_OBJECT_NO_OFFSET objects in the
             # main SCM, so the IPL-only background pass cannot discover them.
             anchor=np.asarray((-375.4989929199219,-1322.31005859375,9.811240196228027))
@@ -162,6 +165,10 @@ class Renderer:
                 handle,component=actor.spec['attach'];other=byhandle[tuple(handle)]
                 if component not in other.names:raise ValueError(f'Missing attached component {component}')
                 parent=other.globals[other.names.index(component)]
+            elif 'bone' in actor.spec:
+                handle,tag=actor.spec['bone'];other=byhandle[tuple(handle)]
+                if tag not in other.tags:raise ValueError(f'Missing attached bone {tag}')
+                parent=other.globals[other.tags.index(tag)]
             actor.draw(self,time,parent)
         GL.glFinish();raw=GL.glReadPixels(0,0,256,144,GL.GL_RGB,GL.GL_UNSIGNED_BYTE)
         return Image.frombytes('RGB',(256,144),raw).transpose(Image.Transpose.FLIP_TOP_BOTTOM)

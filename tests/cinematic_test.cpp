@@ -6,6 +6,8 @@
 #include <vector>
 #include <fstream>
 #include <unistd.h>
+#include <dirent.h>
+#include <algorithm>
 uint16_t testFramebuffer[256*192]{};
 static uint64_t ticks=0;static unsigned frames=0,stopAcks=0,starts=0,skipAt=0,skipKey=0,stallAt=0;
 static const void* active=nullptr;static bool stopPending=false;
@@ -29,9 +31,12 @@ static void reset(){frames=skipAt=stallAt=0;assert(!active && !stopPending);}
 int main(int argc,char** argv) {
     assert(argc==2);assert(std::freopen("/dev/null","w",stdout));
     std::string root=argv[1];
-    for(const char* name : {"logo","gtatitles","int_a","int_m","int_d","departure","int_b","law_1a","law_1b","law_2a","law_2b","law_2c","law_3","law_4","col_1","col_2","tex_1"}) {
+    std::vector<std::string> movies;DIR* directory=opendir((root+"/cutscenes").c_str());assert(directory);
+    while(auto* entry=readdir(directory)){std::string name=entry->d_name;if(name.size()>4 && name.substr(name.size()-4)==".vcv")movies.push_back(name.substr(0,name.size()-4));}
+    closedir(directory);std::sort(movies.begin(),movies.end());assert(movies.size()>=17);
+    for(const auto& movie : movies) {const char* name=movie.c_str();
         reset();std::string file=root+"/cutscenes/"+name+".vcv";
-        assert(slice::Cinematic::play(file.c_str(),name)==slice::Cinematic::Completed);
+        auto result=slice::Cinematic::play(file.c_str(),name);if(result!=slice::Cinematic::Completed)std::fprintf(stderr,"Movie %s failed: result %d error %d\n",name,int(result),slice::Cinematic::lastError);assert(result==slice::Cinematic::Completed);
         assert(!active && !stopPending && !slice::Cinematic::lastError);
     }
     std::string file=root+"/cutscenes/int_m.vcv";
@@ -47,5 +52,5 @@ int main(int argc,char** argv) {
     char path[]="/tmp/revc-cinematic-XXXXXX";int fd=mkstemp(path);assert(fd>=0);close(fd);
     {std::ofstream out(path,std::ios::binary);out.write(data.data(),data.size());}
     reset();assert(slice::Cinematic::play(path,"broken")==slice::Cinematic::Error);assert(slice::Cinematic::lastError==5 && !active && !stopPending);unlink(path);
-    std::fprintf(stderr,"Seventeen complete movies, sequential ARM7 stop acknowledgements, scene/all skip, storage-stall recovery and corrupt-frame cleanup passed (%u starts, %u acknowledged stops)\n",starts,stopAcks);
+    std::fprintf(stderr,"%zu complete movies, sequential ARM7 stop acknowledgements, scene/all skip, storage-stall recovery and corrupt-frame cleanup passed (%u starts, %u acknowledged stops)\n",movies.size(),starts,stopAcks);
 }

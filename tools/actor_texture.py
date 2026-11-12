@@ -47,7 +47,7 @@ class SharedVehicleAtlas:
     Original rasters are resized and quantized once, instead of quantizing a
     mostly empty 256px per-car atlas and then shrinking/quantizing it again.
     """
-    def __init__(self):self.images=[];self.keys={};self.rects=None;self.report={};self.limits=[]
+    def __init__(self,width=256):self.width=width;self.images=[];self.keys={};self.rects=None;self.report={};self.limits=[]
     def add(self,mat,textures,paint):
         import hashlib
         color,name=mat;rgb=np.asarray(color[:3],float)
@@ -69,9 +69,9 @@ class SharedVehicleAtlas:
         return self.keys[key]
     def freeze(self):
         # MaxRects packing with a duplicated edge texel around every material.
-        for large in (64,56,48,44,40,36,32):
+        for large in (64,56,48,44,40,36,32,28,24,20,16):
             sizes=[tuple(max(1,round(d*min(1,large/max(im.size),limit/max(im.size)))) for d in im.size) for im,limit in zip(self.images,self.limits)]
-            free=[(0,0,256,128)];rects={}
+            free=[(0,0,self.width,128)];rects={}
             for i in sorted(range(len(sizes)),key=lambda i:max(sizes[i]),reverse=True):
                 w,h=(d+2 for d in sizes[i]);fits=[r for r in free if w<=r[2] and h<=r[3]]
                 if not fits:break
@@ -85,15 +85,15 @@ class SharedVehicleAtlas:
                     if y+h<fy+fh:remaining.append((fx,y+h,fw,fy+fh-y-h))
                 free=[a for k,a in enumerate(remaining) if not any(j!=k and b[0]<=a[0] and b[1]<=a[1] and b[0]+b[2]>=a[0]+a[2] and b[1]+b[3]>=a[1]+a[3] and (a!=b or j<k) for j,b in enumerate(remaining))]
             if len(rects)==len(sizes):
-                self.rects=rects;self.report={'size':[256,128],'unique_materials':len(sizes),'large_raster_edge':large,'content_pixels':sum(w*h for w,h in sizes)};return
-        raise ValueError('Vehicle atlas exceeds 32 KiB allocation')
+                self.rects=rects;self.report={'size':[self.width,128],'unique_materials':len(sizes),'large_raster_edge':large,'content_pixels':sum(w*h for w,h in sizes)};return
+        raise ValueError('Vehicle atlas exceeds its allocation')
     def uv(self,slot,uv):
         if self.rects is None:raise ValueError('Freeze atlas before assigning UVs')
         x,y,w,h=self.rects[slot]
         return (np.array([x+.5,y+.5])+np.clip(uv,0,1)*np.array([w-1,h-1]))*16
     def save(self,path):
         if self.rects is None:raise ValueError('Freeze atlas before saving')
-        image=Image.new('RGB',(256,128))
+        image=Image.new('RGB',(self.width,128))
         for i,(x,y,w,h) in self.rects.items():
             tile=np.asarray(self.images[i].resize((w,h),Image.Resampling.LANCZOS))
             image.paste(Image.fromarray(np.pad(tile,((1,1),(1,1),(0,0)),mode='edge')),(x-1,y-1))

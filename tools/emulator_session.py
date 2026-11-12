@@ -13,6 +13,13 @@ from pathlib import Path
 
 root=Path(__file__).resolve().parents[1]
 work=root/'build/emulator'
+# The dynamic linker and Qt split search paths at colons, including the
+# colon in GVFS SFTP mount names. Use a per-session alias for their paths.
+alias=None
+if ':' in str(work):
+    alias=tempfile.TemporaryDirectory(prefix='revc-emu-path-')
+    link=Path(alias.name)/'emulator'
+    link.symlink_to(work,target_is_directory=True);work=link
 env=os.environ.copy()
 display=next(n for n in range(110,170) if not Path(f'/tmp/.X11-unix/X{n}').exists() and not Path(f'/tmp/.X{n}-lock').exists())
 env.update(DISPLAY=f':{display}',LD_LIBRARY_PATH=str(work/'local/usr/lib'),
@@ -84,7 +91,7 @@ try:
     if args.debug:command=['gdb','-batch','-ex','run','-ex','bt','--args',*command]
     else:command=['stdbuf','-oL','-eL',*command]
     emulator=subprocess.Popen(command,env=env,cwd=work,stdout=logemu,stderr=logemu,start_new_session=True)
-    (work/'session.json').write_text(__import__('json').dumps({'display':env['DISPLAY'],'xvfb':xvfb.pid,'emulator':emulator.pid,'command':command},indent=2)+'\n')
+    (work/'session.json').write_text(__import__('json').dumps({'display':env['DISPLAY'],'tool_root':str(work),'xvfb':xvfb.pid,'emulator':emulator.pid,'command':command},indent=2)+'\n')
     print('Emulator running on isolated display '+env['DISPLAY'],flush=True)
     print('Emulator exit:',emulator.wait(),flush=True)
 finally:

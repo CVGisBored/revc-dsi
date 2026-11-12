@@ -129,7 +129,7 @@ def convert_car(archive,name,output,budget,texture_size=256,build_lod=False,shar
                 for i,(_,center) in enumerate(parts[1:5],1):
                     if all(abs(p[0]-center[0])<.3 and (p[1]-center[1])**2+(p[2]-center[2])**2<(.7*scale)**2 for p in pts):part=i;break
                 low.append((material_color(materials[mat],uv,(a,b,c),textures,paint),pts,np.asarray([uv[i] for i in (a,b,c)]),atlas.add(materials[mat],textures,paint),part))
-        if not low or len(low)>160:raise ValueError('Missing or oversized original vehicle LOD')
+        if not low or len(low)>(176 if name=='firetruk' else 160):raise ValueError('Missing or oversized original vehicle LOD')
     payload=[];uv_payload=[]
     for color,points,uv,slot,part in records:
         coords=[round((v-(base if k==1 else 0))*64) for p in points for k,v in enumerate(p)]

@@ -16,7 +16,7 @@ static bool visit(slice::Point global,bool optional=false) {
     std::printf("Visit %.2f %.2f %.2f -> %.2f %.2f %.2f\n",global.x,global.y,global.z,game.player.x+a.x,game.player.y+a.y,game.player.z+a.z);return true;
 }
 static void tick(int frames=1){campaign.tick(game,actors,world.anchor(),frames,false);}
-static void waitPassed(){for(int i=0;i<7;++i)tick(30);assert(campaign.state()==slice::Campaign::Office || campaign.state()==slice::Campaign::CampaignComplete);}
+static void waitPassed(){for(int i=0;i<7;++i)tick(30);assert(campaign.state()==slice::Campaign::Office || campaign.state()==slice::Campaign::LibraryOffer);}
 static void office(){actors.health=100;actors.inCar=false;auto a=world.anchor();auto local=campaign.target(a);visit({local.x+a.x,local.y+a.y,local.z+a.z});tick();assert(campaign.briefing() && campaign.pendingCutscene());
     auto saved=campaign;campaign.finishCutscene(false);assert(campaign.briefing() && !campaign.pendingCutscene());assert(*campaign.dialogue());campaign=saved;
     campaign.finishCutscene(true);assert(!campaign.briefing() && !campaign.pendingCutscene());}
@@ -78,6 +78,6 @@ int main(int argc,char** argv){
     office();assert(campaign.state()==slice::Campaign::GolfClothes);visit(slice::extraData::GolfClothes);tick();assert(campaign.state()==slice::Campaign::GolfEntrance);
     visit(slice::extraData::GolfEntrance);tick();assert(campaign.state()==slice::Campaign::GolfFight);
     attackPosition(slice::extraData::GolfTarget);for(int i=0;i<8 && campaign.state()==slice::Campaign::GolfFight;++i)hit(campaign.npcs()[0].global,false);
-    assert(campaign.state()==slice::Campaign::Passed && actors.cash==2950);waitPassed();assert(campaign.state()==slice::Campaign::CampaignComplete && campaign.completed()==8);
+    assert(campaign.state()==slice::Campaign::Passed && actors.cash==2950);waitPassed();assert(campaign.state()==slice::Campaign::LibraryOffer && campaign.completed()==8);
     tick(30);assert(actors.cash==2950);std::puts("Eight mission chain: authored coordinates, escorts, combat, juror cars, riot and once-only rewards passed");
 }
